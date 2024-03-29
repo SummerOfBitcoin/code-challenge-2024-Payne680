@@ -124,10 +124,14 @@ function mineBlockAndGenerateOutput(validTransactions) {
 
 // Main function to orchestrate the process
 function main() {
-  const mempoolFolderPath = path.join(__dirname, 'mempool');
-  const validTransactions = readAndValidateTransactions(mempoolFolderPath);
-  mineBlockAndGenerateOutput(validTransactions);
-  console.log('Block mined and output.txt generated successfully!');
+  try {
+    const mempoolFolderPath = path.join(__dirname, 'mempool');
+    const validTransactions = readAndValidateTransactions(mempoolFolderPath);
+    mineBlockAndGenerateOutput(validTransactions);
+    console.log('Block mined and output.txt generated successfully!');
+  } catch (error) {
+    console.error('An error occurred:', error);
+  }
 }
 
 // Execute main function
