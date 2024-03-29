@@ -2,34 +2,21 @@ const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
 
-// Read JSON files in the mempool folder
-const mempoolFolderPath = path.join(__dirname, 'mempool');
-const mempoolFiles = fs.readdirSync(mempoolFolderPath);
-
-// Helper function to validate a transaction
+// Function to validate a transaction
 function validateTransaction(transaction) {
-  if (!Array.isArray(transaction.inputs)) {
+  if (!transaction || !transaction.vin || !Array.isArray(transaction.vin) || transaction.vin.length === 0 ||
+    !transaction.vout || !Array.isArray(transaction.vout) || transaction.vout.length === 0) {
     return false;
   }
 
-  for (const input of transaction.inputs) {
-    if (!isValidSignature(input)) {
-      return false;
-    }
-
-    // Additional input validation checks...
-    if (!isInputUnspent(input)) {
+  for (const input of transaction.vin) {
+    if (!isValidSignature(input) || !isInputUnspent(input)) {
       return false;
     }
   }
 
-  for (const output of transaction.outputs) {
-    if (output.amount <= 0) {
-      return false;
-    }
-
-    // Additional output validation checks...
-    if (!isAddressValid(output.address)) {
+  for (const output of transaction.vout) {
+    if (output.value <= 0 || !isAddressValid(output.scriptpubkey_address)) {
       return false;
     }
   }
@@ -39,94 +26,109 @@ function validateTransaction(transaction) {
   return true;
 }
 
+// Function to validate signature
 function isValidSignature(input) {
+  // Check if input object and required properties exist
+  if (!input || !input.publicKey || !input.message || !input.signature) {
+    return false;
+  }
+
   const publicKey = input.publicKey;
   const message = input.message;
   const signature = input.signature;
 
-  // Verify the signature using the public key and message
   const verifier = crypto.createVerify('SHA256');
   verifier.update(message);
-  const isValid = verifier.verify(publicKey, signature, 'hex');
+  const isSignatureValid = verifier.verify(publicKey, signature, 'hex');
 
-  return isValid;
+  return isSignatureValid;
 }
 
+// Function to check if input is unspent
 function isInputUnspent(input) {
-  // Implement input unspent validation logic
-  // Return true if the input is unspent, false otherwise
-
-  // Placeholder implementation
-  const isUnspent = input.isUnspent; // Assuming the input has an 'isUnspent' property
-  return isUnspent;
-}
-
-function isAddressValid(address) {
-  // Implement address validation logic
-  // Return true if the address is valid, false otherwise
-
-  // Placeholder implementation
-  const isValidAddress = validateAddressFormat(address); // Assuming a separate function to validate the address format
-  return isValidAddress;
-}
-
-function validateAddressFormat(address) {
-  // Implement address format validation logic
-  // Return true if the address format is valid, false otherwise
-
-  // Placeholder implementation
-  // Example: Check if the address starts with '0x' for Ethereum addresses
-  return address.startsWith('0x');
-}
-
-// Array to store valid transactions
-const validTransactions = [];
-
-// Iterate through each transaction file
-mempoolFiles.forEach((file) => {
-  const filePath = path.join(mempoolFolderPath, file);
-  const transaction = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-
-  // Validate the transaction
-  if (validateTransaction(transaction)) {
-    validTransactions.push(transaction);
+  if (!input || !input.vin || !Array.isArray(input.vin) || input.vin.length === 0) {
+    return false;
   }
-});
 
-// Construct the block header
-const blockHeader = {
-  version: 1,
-  previousBlockHash: '0000000000000000000000000000000000000000000000000000000000000000', // Placeholder for previous block hash
-  timestamp: Math.floor(Date.now() / 1000),
-  difficultyTarget: '0000ffff00000000000000000000000000000000000000000000000000000000',
-};
+  for (const vinItem of input.vin) {
+    if (vinItem.is_coinbase) {
+      return false;
+    }
+  }
 
-// Create the coinbase transaction
-const coinbaseTransaction = {
-  txid: 'coinbase', // Placeholder for coinbase transaction ID
-  inputs: [], // Placeholder for coinbase transaction inputs
-  outputs: [], // Placeholder for coinbase transaction outputs
-};
+  return true;
+}
 
-// Serialize the coinbase transaction and valid transactions
-const serializedCoinbase = JSON.stringify(coinbaseTransaction);
-const serializedTransactions = validTransactions.map((transaction) => JSON.stringify(transaction));
+// Function to validate address
+function isAddressValid(address) {
+  const bitcoinAddressRegex = /^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$/;
+  return typeof address === 'string' && bitcoinAddressRegex.test(address);
+}
 
-// Calculate the block hash
-let blockHash;
-let nonce = 0;
-do {
-  const headerString = JSON.stringify(blockHeader) + serializedCoinbase + serializedTransactions.join('');
-  const hash = crypto.createHash('sha256').update(headerString + nonce).digest('hex');
-  blockHash = crypto.createHash('sha256').update(hash).digest('hex');
-  nonce++;
-} while (blockHash >= blockHeader.difficultyTarget);
+// Function to read and validate transactions from mempool folder
+function readAndValidateTransactions(folderPath) {
+  const files = fs.readdirSync(folderPath);
+  const validTransactions = [];
 
-// Generate the output.txt file
-const outputFilePath = './output.txt';
-const outputData = [JSON.stringify(blockHeader), serializedCoinbase, ...serializedTransactions.map((tx) => JSON.parse(tx).txid)];
-const outputContent = outputData.join('\n');
+  for (const file of files) {
+    const filePath = path.join(folderPath, file);
+    let transaction;
+    try {
+      transaction = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    } catch (err) {
+      console.error('Error reading transaction file:', err);
+      continue; // Continue to the next file if unable to read or parse transaction
+    }
 
-fs.writeFileSync(outputFilePath, outputContent, 'utf-8');
+    if (validateTransaction(transaction)) {
+      validTransactions.push(transaction);
+    }
+  }
 
-console.log('Block mined and output.txt generated successfully!');
+  return validTransactions;
+}
+
+// Function to mine block and generate output.txt
+function mineBlockAndGenerateOutput(validTransactions) {
+  const blockHeader = {
+    version: 1,
+    previousBlockHash: '0000000000000000000000000000000000000000000000000000000000000000',
+    timestamp: Math.floor(Date.now() / 1000),
+    difficultyTarget: '0000ffff00000000000000000000000000000000000000000000000000000000',
+  };
+
+  const coinbaseTransaction = {
+    txid: crypto.randomBytes(16).toString('hex'),
+    inputs: [],
+    outputs: [{ scriptpubkey_address: 'bc1qec944gx6cu3e0292t2zajz3vldr0pa3sh356d9', value: 50 }],
+  };
+
+  const serializedCoinbase = JSON.stringify(coinbaseTransaction);
+  const serializedTransactions = validTransactions.map((transaction) => JSON.stringify(transaction));
+
+  let blockHash;
+  let nonce = 0;
+  do {
+    const headerString = JSON.stringify(blockHeader) + serializedCoinbase + serializedTransactions.join('');
+    const hash = crypto.createHash('sha256').update(headerString + nonce).digest('hex');
+    blockHash = crypto.createHash('sha256').update(hash).digest('hex');
+    nonce++;
+  } while (parseInt(blockHash, 16) >= parseInt(blockHeader.difficultyTarget, 16));
+
+  const outputFilePath = './output.txt';
+  const outputData = [JSON.stringify(blockHeader), serializedCoinbase, ...serializedTransactions.map((tx) => JSON.parse(tx).txid)];
+  const outputContent = outputData.join('\n');
+
+  fs.writeFileSync(outputFilePath, outputContent, 'utf-8');
+}
+
+// Main function to orchestrate the process
+function main() {
+  const mempoolFolderPath = path.join(__dirname, 'mempool');
+  const validTransactions = readAndValidateTransactions(mempoolFolderPath);
+  mineBlockAndGenerateOutput(validTransactions);
+  console.log('Block mined and output.txt generated successfully!');
+}
+
+// Execute main function
+main();
